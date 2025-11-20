@@ -220,6 +220,55 @@ async def test_stream_transformation_error_async():
                 )
 
 
+@pytest.mark.asyncio
+async def test_stream_kwarg_removed_on_adapter_path(monkeypatch):
+    """
+    Ensure agenerate_content_stream strips duplicate `stream` when routing through the adapter path.
+    """
+
+    from litellm.google_genai import main as google_genai_main
+    from litellm.types.router import GenericLiteLLMParams
+
+    captured_kwargs = {}
+
+    class DummySetupResult:
+        def __init__(self):
+            self.generate_content_provider_config = None
+            self.generate_content_config_dict = {}
+            self.litellm_params = GenericLiteLLMParams()
+
+    async def mock_async_handler(**kwargs):
+        captured_kwargs.update(kwargs)
+        return "ok"
+
+    def mock_setup_generate_content_call(*args, **kwargs):
+        return DummySetupResult()
+
+    monkeypatch.setattr(
+        google_genai_main.GenerateContentHelper,
+        "setup_generate_content_call",
+        mock_setup_generate_content_call,
+    )
+    monkeypatch.setattr(
+        google_genai_main.GenerateContentToCompletionHandler,
+        "async_generate_content_handler",
+        mock_async_handler,
+    )
+
+    result = await google_genai_main.agenerate_content_stream(
+        model="gemini-pro",
+        contents=[{"role": "user", "parts": [{"text": "Hello"}]}],
+        stream=True,
+    )
+
+    assert result == "ok"
+    assert captured_kwargs["stream"] is True
+    # The kwargs passed into the handler should no longer contain a duplicate stream entry
+    assert "stream" in captured_kwargs and len(
+        [k for k in captured_kwargs.keys() if k == "stream"]
+    ) == 1
+
+
 def test_citation_metadata_transformation():
     """
     Test that citationMetadata.citationSources is properly transformed to citationMetadata.citations

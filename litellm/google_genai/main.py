@@ -374,6 +374,8 @@ async def agenerate_content_stream(
     """
     local_vars = locals()
     try:
+        # Avoid passing duplicate `stream` to downstream handlers
+        stream = bool(kwargs.pop("stream", True))
         kwargs["agenerate_content_stream"] = True
 
         # Handle generationConfig parameter from kwargs for backward compatibility
@@ -392,6 +394,7 @@ async def agenerate_content_stream(
             config=config,
             custom_llm_provider=custom_llm_provider,
             tools=tools,
+            stream=stream,
             **kwargs,
         )
 
@@ -405,7 +408,7 @@ async def agenerate_content_stream(
                     config=setup_result.generate_content_config_dict,
                     litellm_params=setup_result.litellm_params,
                     tools=tools,
-                    stream=True,
+                    stream=stream,
                     **kwargs,
                 )
             )
@@ -426,7 +429,7 @@ async def agenerate_content_stream(
             timeout=timeout or request_timeout,
             _is_async=True,
             client=kwargs.get("client"),
-            stream=True,
+            stream=stream,
             litellm_metadata=kwargs.get("litellm_metadata", {}),
         )
 
@@ -461,6 +464,8 @@ def generate_content_stream(
     """
     local_vars = locals()
     try:
+        # Avoid passing duplicate `stream` to downstream handlers
+        stream = bool(kwargs.pop("stream", True))
         # Remove any async-related flags since this is the sync function
         _is_async = kwargs.pop("agenerate_content_stream", False)
 
@@ -474,6 +479,7 @@ def generate_content_stream(
             config=config,
             custom_llm_provider=custom_llm_provider,
             tools=tools,
+            stream=stream,
             **kwargs,
         )
 
@@ -486,7 +492,7 @@ def generate_content_stream(
                 config=setup_result.generate_content_config_dict,
                 _is_async=_is_async,
                 litellm_params=setup_result.litellm_params,
-                stream=True,
+                stream=stream,
                 **kwargs,
             )
 
@@ -505,7 +511,7 @@ def generate_content_stream(
             timeout=timeout or request_timeout,
             _is_async=_is_async,
             client=kwargs.get("client"),
-            stream=True,
+            stream=stream,
             litellm_metadata=kwargs.get("litellm_metadata", {}),
         )
 
