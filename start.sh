@@ -54,17 +54,15 @@ if [ ! -f "config.yaml" ]; then
     echo "⚠️  Warning: config.yaml not found. Creating a basic configuration..."
     cat > config.yaml << EOF
 model_list:
-  - model_name: gpt-3.5-turbo
+  - model_name: gpt-5.2
     litellm_params:
-      model: gpt-3.5-turbo
-      api_key: "your-openai-api-key"
+      model: gpt-5.2
+      api_key: <add_your_openai_api_key_here>
 
-general_settings:
-  master_key: "your-master-key"
-  
-litellm_settings:
-  drop_params: true
-  set_verbose: false
+router_settings: # router_settings are optional
+  model_group_alias: {"gemini-2.5-pro": "gpt-5.2",
+                      "gemini-2.5-flash": "gpt-5.2",
+                      "gemini-2.5-flash-lite": "gpt-5.2"}
 EOF
     echo "📝 Basic config.yaml created. Please update it with your API keys and model configurations."
 fi
