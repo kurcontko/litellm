@@ -16,6 +16,7 @@ Log Proxy input, output, and exceptions using:
 - Custom Callbacks - Custom code and API endpoints
 - Langsmith
 - DataDog
+- Azure Sentinel
 - DynamoDB
 - etc.
 
@@ -1574,6 +1575,10 @@ curl --location 'http://0.0.0.0:4000/chat/completions' \
 
 👉 Go here for using [Datadog LLM Observability](../observability/datadog) with LiteLLM Proxy
 
+## [Azure Sentinel](../observability/azure_sentinel)
+
+👉 Go here for using [Azure Sentinel](../observability/azure_sentinel) with LiteLLM Proxy
+
 
 ## Lunary
 #### Step1: Install dependencies and set your environment variables 
@@ -1731,7 +1736,6 @@ class MyCustomHandler(CustomLogger):
 proxy_handler_instance = MyCustomHandler()
 
 # Set litellm.callbacks = [proxy_handler_instance] on the proxy
-# need to set litellm.callbacks = [proxy_handler_instance] # on the proxy
 ```
 
 #### Step 2 - Pass your custom callback class in `config.yaml`
@@ -2439,7 +2443,7 @@ Your logs should be available on DynamoDB
     "S": "{'user': 'ishaan-2'}"
   },
   "response": {
-    "S": "EmbeddingResponse(model='text-embedding-ada-002', data=[{'embedding': [-0.03503197431564331, -0.020601635798811913, -0.015375726856291294,
+    "S": "EmbeddingResponse(model='text-embedding-ada-002-v2', data=[{'embedding': [-0.03503197431564331, -0.020601635798811913, -0.015375726856291294,
   }
 }
 ```

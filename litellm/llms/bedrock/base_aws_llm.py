@@ -314,6 +314,12 @@ class BaseAWSLLM:
         if model.startswith("invoke/"):
             model = model.replace("invoke/", "", 1)
 
+        # Special case: Check for "nova" in model name first (before "amazon")
+        # This handles amazon.nova-* models which would otherwise match "amazon" (Titan)
+        if "nova" in model.lower():
+            if "nova" in get_args(BEDROCK_INVOKE_PROVIDERS_LITERAL):
+                return cast(BEDROCK_INVOKE_PROVIDERS_LITERAL, "nova")
+
         _split_model = model.split(".")[0]
         if _split_model in get_args(BEDROCK_INVOKE_PROVIDERS_LITERAL):
             return cast(BEDROCK_INVOKE_PROVIDERS_LITERAL, _split_model)
@@ -323,13 +329,9 @@ class BaseAWSLLM:
         if provider is not None:
             return provider
 
-        # check if provider == "nova"
-        if "nova" in model:
-            return "nova"
-        else:
-            for provider in get_args(BEDROCK_INVOKE_PROVIDERS_LITERAL):
-                if provider in model:
-                    return provider
+        for provider in get_args(BEDROCK_INVOKE_PROVIDERS_LITERAL):
+            if provider in model:
+                return provider
         return None
 
     @staticmethod
@@ -352,6 +354,26 @@ class BaseAWSLLM:
         elif provider == "deepseek_r1" and "deepseek_r1/" in model_id:
             model_id = BaseAWSLLM._get_model_id_from_model_with_spec(
                 model_id, spec="deepseek_r1"
+            )
+        elif provider == "openai" and "openai/" in model_id:
+            model_id = BaseAWSLLM._get_model_id_from_model_with_spec(
+                model_id, spec="openai"
+            )
+        elif provider == "qwen2" and "qwen2/" in model_id:
+            model_id = BaseAWSLLM._get_model_id_from_model_with_spec(
+                model_id, spec="qwen2"
+            )
+        elif provider == "qwen3" and "qwen3/" in model_id:
+            model_id = BaseAWSLLM._get_model_id_from_model_with_spec(
+                model_id, spec="qwen3"
+            )
+        elif provider == "stability" and "stability/" in model_id:
+            model_id = BaseAWSLLM._get_model_id_from_model_with_spec(
+                model_id, spec="stability"
+            )
+        elif provider == "moonshot" and "moonshot/" in model_id:
+            model_id = BaseAWSLLM._get_model_id_from_model_with_spec(
+                model_id, spec="moonshot"
             )
         return model_id
 
@@ -387,9 +409,16 @@ class BaseAWSLLM:
         Handles scenarios like:
         1. model=cohere.embed-english-v3:0 -> Returns `cohere`
         2. model=amazon.titan-embed-text-v1 -> Returns `amazon`
-        3. model=us.twelvelabs.marengo-embed-2-7-v1:0 -> Returns `twelvelabs`
-        4. model=twelvelabs.marengo-embed-2-7-v1:0 -> Returns `twelvelabs`
+        3. model=amazon.nova-2-multimodal-embeddings-v1:0 -> Returns `nova`
+        4. model=us.twelvelabs.marengo-embed-2-7-v1:0 -> Returns `twelvelabs`
+        5. model=twelvelabs.marengo-embed-2-7-v1:0 -> Returns `twelvelabs`
         """
+        # Special case: Check for "nova" in model name first (before "amazon")
+        # This handles amazon.nova-* models
+        if "nova" in model.lower():
+            if "nova" in get_args(BEDROCK_EMBEDDING_PROVIDERS_LITERAL):
+                return cast(BEDROCK_EMBEDDING_PROVIDERS_LITERAL, "nova")
+
         # Handle regional models like us.twelvelabs.marengo-embed-2-7-v1:0
         if "." in model:
             parts = model.split(".")
@@ -935,7 +964,9 @@ class BaseAWSLLM:
         return endpoint_url, proxy_endpoint_url
 
     def _select_default_endpoint_url(
-        self, endpoint_type: Optional[Literal["runtime", "agent", "agentcore"]], aws_region_name: str
+        self,
+        endpoint_type: Optional[Literal["runtime", "agent", "agentcore"]],
+        aws_region_name: str,
     ) -> str:
         """
         Select the default endpoint url based on the endpoint type
