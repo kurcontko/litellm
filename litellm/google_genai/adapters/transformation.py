@@ -339,8 +339,12 @@ class GoogleGenAIAdapter:
 
                     if "description" in func_decl:
                         function_chunk["description"] = func_decl["description"]
-                    if "parametersJsonSchema" in func_decl:
-                        function_chunk["parameters"] = func_decl["parametersJsonSchema"]
+                    parameters_schema = func_decl.get("parametersJsonSchema")
+                    if parameters_schema is None and "parameters" in func_decl:
+                        parameters_schema = func_decl.get("parameters")
+                    function_chunk["parameters"] = self._sanitize_openai_tool_parameters(
+                        parameters_schema
+                    )
 
                     openai_tool = {"type": "function", "function": function_chunk}
                     openai_tools.append(openai_tool)
@@ -349,6 +353,27 @@ class GoogleGenAIAdapter:
         normalized_tools = [normalize_tool_schema(tool) for tool in openai_tools]
 
         return cast(List[ChatCompletionToolParam], normalized_tools)
+
+    def _sanitize_openai_tool_parameters(
+        self, parameters_schema: Any
+    ) -> Dict[str, Any]:
+        """Ensure tool parameters meet OpenAI JSON Schema constraints."""
+        if not isinstance(parameters_schema, dict):
+            return {"type": "object", "properties": {}}
+
+        sanitized = parameters_schema.copy()
+        for key in ("oneOf", "anyOf", "allOf", "enum", "not"):
+            sanitized.pop(key, None)
+
+        if sanitized.get("type") is None:
+            sanitized["type"] = "object"
+        if sanitized.get("type") != "object":
+            return {"type": "object", "properties": {}}
+
+        if not isinstance(sanitized.get("properties"), dict):
+            sanitized["properties"] = {}
+
+        return sanitized
 
     def _transform_google_genai_tool_config_to_openai(
         self,
