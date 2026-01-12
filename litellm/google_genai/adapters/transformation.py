@@ -406,6 +406,12 @@ class GoogleGenAIAdapter:
                     )
                 )
 
+        # Track pending tool_call IDs from assistant messages that need responses
+        # This is a queue of tool_call_ids waiting for their corresponding tool responses
+        pending_tool_call_ids: List[str] = []
+        # Counter for generating unique tool_call IDs
+        tool_call_counter = 0
+
         for content in contents:
             role = content.get("role", "user")
             parts = content.get("parts", [])
@@ -445,9 +451,25 @@ class GoogleGenAIAdapter:
                         elif "functionResponse" in part:
                             # Transform function response to tool message
                             func_response = part["functionResponse"]
+                            func_name = func_response.get("name", "unknown")
+
+                            # Try to match with a pending tool_call_id
+                            if pending_tool_call_ids:
+                                # Use the first pending ID (FIFO order)
+                                tool_call_id = pending_tool_call_ids.pop(0)
+                            else:
+                                # No pending tool_call - this is an orphan response
+                                # Generate a fallback ID (though this may still fail OpenAI validation)
+                                verbose_logger.warning(
+                                    f"functionResponse for '{func_name}' has no matching preceding functionCall. "
+                                    "This may cause OpenAI API errors."
+                                )
+                                tool_call_id = f"call_{func_name}_{tool_call_counter}"
+                                tool_call_counter += 1
+
                             tool_message = ChatCompletionToolMessage(
                                 role="tool",
-                                tool_call_id=f"call_{func_response.get('name', 'unknown')}",
+                                tool_call_id=tool_call_id,
                                 content=json.dumps(func_response.get("response", {})),
                             )
                             tool_messages.append(tool_message)
@@ -457,6 +479,10 @@ class GoogleGenAIAdapter:
                                 ChatCompletionTextObject, {"type": "text", "text": part}
                             )
                         )
+
+                # Add tool messages FIRST - they must immediately follow the preceding
+                # assistant message with tool_calls (OpenAI API requirement)
+                messages.extend(tool_messages)
 
                 # Add user message if there's content
                 if content_parts:
@@ -480,9 +506,6 @@ class GoogleGenAIAdapter:
                             )
                         )
 
-                # Add tool messages
-                messages.extend(tool_messages)
-
             elif role == "model":
                 # Handle assistant messages with potential function calls
                 combined_text = ""
@@ -493,17 +516,24 @@ class GoogleGenAIAdapter:
                         if "text" in part:
                             combined_text += part["text"]
                         elif "functionCall" in part:
-                            # Transform function call to tool call
+                            # Transform function call to tool call with unique ID
                             func_call = part["functionCall"]
+                            func_name = func_call.get("name", "unknown")
+                            # Generate unique tool_call_id
+                            unique_id = f"call_{func_name}_{tool_call_counter}"
+                            tool_call_counter += 1
+
                             tool_call = ChatCompletionAssistantToolCall(
-                                id=f"call_{func_call.get('name', 'unknown')}",
+                                id=unique_id,
                                 type="function",
                                 function=ChatCompletionToolCallFunctionChunk(
-                                    name=func_call.get("name", ""),
+                                    name=func_name,
                                     arguments=json.dumps(func_call.get("args", {})),
                                 ),
                             )
                             tool_calls.append(tool_call)
+                            # Track this ID as pending (expecting a response)
+                            pending_tool_call_ids.append(unique_id)
                     elif isinstance(part, str):
                         combined_text += part
 
@@ -521,6 +551,32 @@ class GoogleGenAIAdapter:
                     )
 
                 messages.append(assistant_message)
+
+        # Post-processing: Handle unanswered tool_calls
+        # If there are pending tool_call_ids (functionCalls without responses),
+        # we need to remove them from the last assistant message to satisfy OpenAI's requirement
+        # that all tool_calls must have corresponding tool responses.
+        if pending_tool_call_ids and messages:
+            # Find the last assistant message with tool_calls
+            for i in range(len(messages) - 1, -1, -1):
+                msg = messages[i]
+                if (
+                    isinstance(msg, dict)
+                    and msg.get("role") == "assistant"
+                    and msg.get("tool_calls")
+                ):
+                    # Filter out unanswered tool_calls
+                    answered_tool_calls = [
+                        tc
+                        for tc in msg["tool_calls"]
+                        if tc.get("id") not in pending_tool_call_ids
+                    ]
+                    if answered_tool_calls:
+                        msg["tool_calls"] = answered_tool_calls
+                    else:
+                        # All tool_calls are unanswered, remove the key entirely
+                        del msg["tool_calls"]
+                    break
 
         return messages
 

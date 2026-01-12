@@ -286,11 +286,15 @@ def test_function_call_message_transformation():
     assert args["location"] == "San Francisco"
 
 def test_function_response_message_transformation():
-    """Test transformation of messages with function responses"""
+    """Test transformation of messages with function responses.
+
+    Note: Tool messages are placed BEFORE user text content to ensure they
+    immediately follow preceding assistant messages with tool_calls (OpenAI API requirement).
+    """
     from litellm.google_genai.adapters.transformation import GoogleGenAIAdapter
-    
+
     adapter = GoogleGenAIAdapter()
-    
+
     model = "gpt-3.5-turbo"
     contents = [
         {
@@ -310,31 +314,205 @@ def test_function_response_message_transformation():
             ]
         }
     ]
-    
+
     completion_request = adapter.translate_generate_content_to_completion(
         model=model,
         contents=contents
     )
-    
+
     # Verify the transformation
     messages = completion_request["messages"]
-    assert len(messages) == 2  # User message + tool message
-    
-    # Check user message
-    user_msg = messages[0]
-    assert user_msg["role"] == "user"
-    assert user_msg["content"] == "Here's the weather data:"
-    
-    # Check tool message
-    tool_msg = messages[1]
+    assert len(messages) == 2  # Tool message + User message
+
+    # Check tool message (comes FIRST to follow preceding assistant with tool_calls)
+    tool_msg = messages[0]
     assert tool_msg["role"] == "tool"
-    assert "call_get_weather" in tool_msg["tool_call_id"]
-    
+    assert tool_msg["tool_call_id"].startswith("call_get_weather_")
+
     # Verify function response content
     response_content = json.loads(tool_msg["content"])
     assert response_content["temperature"] == "72F"
     assert response_content["condition"] == "sunny"
     assert response_content["humidity"] == "45%"
+
+    # Check user message (comes AFTER tool message)
+    user_msg = messages[1]
+    assert user_msg["role"] == "user"
+    assert user_msg["content"] == "Here's the weather data:"
+
+def test_full_agentic_conversation_tool_message_ordering():
+    """Test that tool messages immediately follow assistant messages with tool_calls.
+
+    This test verifies the fix for the OpenAI API error:
+    "Invalid parameter: messages with role 'tool' must be a response to a preceeding message with 'tool_calls'."
+
+    In a full agentic conversation like:
+    1. user: "What's the weather?"
+    2. model: functionCall(get_weather)
+    3. user: text("Thanks!") + functionResponse(result)
+    4. model: "The weather is sunny"
+
+    The tool message from step 3 must immediately follow the assistant message from step 2,
+    NOT after the user text from step 3.
+    """
+    from litellm.google_genai.adapters.transformation import GoogleGenAIAdapter
+
+    adapter = GoogleGenAIAdapter()
+
+    model = "gpt-4"
+    contents = [
+        # Step 1: User asks a question
+        {
+            "role": "user",
+            "parts": [{"text": "What's the weather in San Francisco?"}]
+        },
+        # Step 2: Model calls a tool
+        {
+            "role": "model",
+            "parts": [
+                {"text": "Let me check the weather for you."},
+                {
+                    "functionCall": {
+                        "name": "get_weather",
+                        "args": {"location": "San Francisco"}
+                    }
+                }
+            ]
+        },
+        # Step 3: User content with BOTH text acknowledgment AND function response
+        {
+            "role": "user",
+            "parts": [
+                {"text": "Thanks for checking!"},
+                {
+                    "functionResponse": {
+                        "name": "get_weather",
+                        "response": {
+                            "temperature": "65F",
+                            "condition": "foggy"
+                        }
+                    }
+                }
+            ]
+        },
+        # Step 4: Model provides final response
+        {
+            "role": "model",
+            "parts": [{"text": "The weather in San Francisco is 65F and foggy."}]
+        }
+    ]
+
+    completion_request = adapter.translate_generate_content_to_completion(
+        model=model,
+        contents=contents
+    )
+
+    messages = completion_request["messages"]
+
+    # Expected message order (5 messages total):
+    # 0: user - "What's the weather in San Francisco?"
+    # 1: assistant - "Let me check..." + tool_calls
+    # 2: tool - function response (MUST follow assistant with tool_calls)
+    # 3: user - "Thanks for checking!"
+    # 4: assistant - "The weather in San Francisco is..."
+
+    assert len(messages) == 5, f"Expected 5 messages, got {len(messages)}"
+
+    # Message 0: Initial user question
+    assert messages[0]["role"] == "user"
+    assert messages[0]["content"] == "What's the weather in San Francisco?"
+
+    # Message 1: Assistant with tool_calls
+    assert messages[1]["role"] == "assistant"
+    assert messages[1]["content"] == "Let me check the weather for you."
+    assert "tool_calls" in messages[1]
+    assert len(messages[1]["tool_calls"]) == 1
+    assert messages[1]["tool_calls"][0]["function"]["name"] == "get_weather"
+
+    # Message 2: Tool response - CRITICAL: Must immediately follow assistant with tool_calls
+    assert messages[2]["role"] == "tool", \
+        f"Message 2 should be 'tool' but got '{messages[2]['role']}'. Tool messages must follow assistant with tool_calls."
+    # Verify tool_call_id matches the assistant's tool_call id
+    assert messages[2]["tool_call_id"] == messages[1]["tool_calls"][0]["id"]
+    response_content = json.loads(messages[2]["content"])
+    assert response_content["temperature"] == "65F"
+
+    # Message 3: User acknowledgment (comes AFTER tool message)
+    assert messages[3]["role"] == "user"
+    assert messages[3]["content"] == "Thanks for checking!"
+
+    # Message 4: Final assistant response
+    assert messages[4]["role"] == "assistant"
+    assert "65F" in messages[4]["content"]
+
+
+def test_multiple_tool_calls_in_agentic_conversation():
+    """Test conversation with multiple sequential tool calls."""
+    from litellm.google_genai.adapters.transformation import GoogleGenAIAdapter
+
+    adapter = GoogleGenAIAdapter()
+
+    model = "gpt-4"
+    contents = [
+        {"role": "user", "parts": [{"text": "Compare weather in SF and NYC"}]},
+        # Model makes two tool calls
+        {
+            "role": "model",
+            "parts": [
+                {
+                    "functionCall": {
+                        "name": "get_weather",
+                        "args": {"location": "San Francisco"}
+                    }
+                },
+                {
+                    "functionCall": {
+                        "name": "get_weather",
+                        "args": {"location": "New York"}
+                    }
+                }
+            ]
+        },
+        # User content with two function responses
+        {
+            "role": "user",
+            "parts": [
+                {
+                    "functionResponse": {
+                        "name": "get_weather",
+                        "response": {"temperature": "65F", "location": "SF"}
+                    }
+                },
+                {
+                    "functionResponse": {
+                        "name": "get_weather",
+                        "response": {"temperature": "75F", "location": "NYC"}
+                    }
+                }
+            ]
+        },
+        {"role": "model", "parts": [{"text": "SF is 65F, NYC is 75F."}]}
+    ]
+
+    completion_request = adapter.translate_generate_content_to_completion(
+        model=model,
+        contents=contents
+    )
+
+    messages = completion_request["messages"]
+
+    # Expected: user, assistant(2 tool_calls), tool, tool, assistant
+    assert len(messages) == 5
+
+    assert messages[0]["role"] == "user"
+    assert messages[1]["role"] == "assistant"
+    assert len(messages[1]["tool_calls"]) == 2
+
+    # Both tool messages must immediately follow the assistant with tool_calls
+    assert messages[2]["role"] == "tool"
+    assert messages[3]["role"] == "tool"
+    assert messages[4]["role"] == "assistant"
+
 
 def test_completion_to_generate_content_with_tool_calls():
     """Test transforming completion response with tool calls back to generate_content format"""
